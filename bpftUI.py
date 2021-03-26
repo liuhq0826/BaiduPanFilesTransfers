@@ -31,32 +31,34 @@ root.iconbitmap(default=ICON_PATH)
 
 # 主窗口配置
 root.wm_title("度盘转存 1.8 by Alice & Asu")
-root.wm_geometry('350x473+240+240')
+root.wm_geometry('404x508+240+240')
 root.wm_attributes("-alpha", 0.91)
 root.resizable(width=False, height=False)
 
 # 定义标签和文本框
 Label(root, text='1.下面填入百度Cookies,不带引号').grid(row=1, column=0, sticky=W)
-entry_cookie = Entry(root, width=48, )
+entry_cookie = Entry(root, width=56, )
 entry_cookie.grid(row=2, column=0, sticky=W, padx=4)
 Label(root, text='2.下面填入浏览器User-Agent').grid(row=3, column=0, sticky=W)
-entry_ua = Entry(root, width=48, )
+entry_ua = Entry(root, width=56, )
 entry_ua.grid(row=4, column=0, sticky=W, padx=4)
 Label(root, text='3.下面填入文件保存位置(默认根目录),不能包含<,>,|,*,?,,/').grid(row=5, column=0, sticky=W)
-entry_folder_name = Entry(root, width=48, )
+# save_path = StringVar(value="yunpan")
+# entry_folder_name = Entry(root, width=56, textvariable=save_path, )
+entry_folder_name = Entry(root, width=56, )
 entry_folder_name.grid(row=6, column=0, sticky=W, padx=4)
 Label(root, text='4.下面粘贴链接,每行一个,格式为:链接 提取码.支持秒传格式.').grid(row=7, sticky=W)
 
 # 链接输入框
-text_links = Text(root, width=48, height=10, wrap=NONE)
+text_links = Text(root, width=56, height=10, wrap=NONE,)
 text_links.grid(row=8, column=0, sticky=W, padx=4, )
 scrollbar_links = Scrollbar(root, width=5)
 scrollbar_links.grid(row=8, column=0, sticky=S + N + E, )
 scrollbar_links.configure(command=text_links.yview)
 text_links.configure(yscrollcommand=scrollbar_links.set)
-
+# text_links.insert(INSERT, "https://pan.baidu.com/s/1GUT2icR82oNUkeh8EvnPBg 12qw")
 # 日志输出框
-text_logs = Text(root, width=48, height=10, wrap=NONE)
+text_logs = Text(root, width=56, height=10, wrap=NONE)
 text_logs.grid(row=10, column=0, sticky=W, padx=4, )
 scrollbar_logs = Scrollbar(root, width=5)
 scrollbar_logs.grid(row=10, column=0, sticky=S + N + E, )
@@ -69,6 +71,33 @@ bottom_run.grid(row=9, pady=6, sticky=W, padx=4)
 label_state = Label(root, text='检查新版', font=('Arial', 9, 'underline'), foreground="#0000ff", cursor='heart')
 label_state.grid(row=9, sticky=E, padx=4)
 label_state.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/hxz393/BaiduPanFilesTransfers", new=0))
+
+botton_get_links = Button(root, text='0.获取网盘地址', command=lambda: thread_it(get_pan_links, ), width=15, height=1, relief='solid')
+botton_get_links.grid(row=11, pady=6, sticky=W, padx=4)
+
+# github公共请求头 填写cookie
+github_request_header = {
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-Mode': 'navigate',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Accept-Language': 'zh-CN,zh;q=0.9',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36'
+}
+def get_pan_links():
+    try:
+        url = 'https://github.com/javadevbooks/books/blob/master/README.md'
+        response = s.get(url=url, headers=github_request_header, timeout=60, allow_redirects=False, verify=False)
+        # <a href="https://pan.baidu.com/s/1Q0lSRhy_8X7gHM333_peBw" rel="nofollow">百度云下载链接</a>
+        link_list = re.findall('<a href="(\\S+?)" rel="nofollow">百度云下载链接</a>', response.text)
+        for link in link_list:
+            text_links.insert(END, link + ' 12qw\n')
+    except:
+        text_logs.insert(END, '访问github出错\n')
+        pass
+    print("get_pan_links")
 
 # 读取配置
 if os.path.exists('config.ini'):
