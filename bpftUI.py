@@ -1,4 +1,6 @@
 import base64
+import json
+import random
 import tempfile
 import threading
 import time
@@ -45,7 +47,9 @@ Label(root, text='2.下面填入浏览器User-Agent').grid(row=3, column=0, stic
 entry_ua = Entry(root, width=48, )
 entry_ua.grid(row=4, column=0, sticky=W, padx=4)
 Label(root, text='3.下面填入文件保存位置(默认根目录),不能包含<,>,|,*,?,,/').grid(row=5, column=0, sticky=W)
-entry_folder_name = Entry(root, width=48, )
+save_path = StringVar(value="/我的资源")
+entry_folder_name = Entry(root, width=48, textvariable=save_path, )
+# entry_folder_name = Entry(root, width=48, )
 entry_folder_name.grid(row=6, column=0, sticky=W, padx=4)
 Label(root, text='4.下面粘贴链接,每行一个,格式为:链接 提取码.支持秒传格式.').grid(row=7, sticky=W)
 
@@ -106,9 +110,30 @@ def get_bdstoken():
 
 # 获取目录列表函数
 @retry(stop_max_attempt_number=5, wait_fixed=1000)
-def get_dir_list(bdstoken):
-    url = 'https://pan.baidu.com/api/list?order=time&desc=1&showempty=0&web=1&page=1&num=1000&dir=%2F&bdstoken=' + bdstoken
-    response = s.get(url=url, headers=request_header, timeout=15, allow_redirects=False, verify=False)
+def get_dir_list(bdstoken, dir="/"):
+    payload = {
+        'dir': dir,
+        'bdstoken': bdstoken,
+        't': random.random(),
+        'channel': 'chunlei'
+    }
+    url = 'https://pan.baidu.com/api/list?order=time&desc=1&showempty=0&web=1&page=1&num=1000'
+    response = s.get(url=url, params=payload, headers=request_header, timeout=15, allow_redirects=False, verify=False)
+    return response.json()
+
+# 获取目录列表函数
+@retry(stop_max_attempt_number=5, wait_fixed=1000)
+def get_share_dir_list(bdstoken, check_links_reason, dir):
+    payload = {
+                'shareid': check_links_reason[0],
+                'uk': check_links_reason[1],
+                'dir': dir,
+                'bdstoken': bdstoken,
+                't': random.random(),
+                'channel': 'chunlei'
+               }
+    url = 'https://pan.baidu.com/share/list?order=other&desc=1&showempty=0&web=1&page=1&num=1000'
+    response = s.get(url=url, params=payload, headers=request_header, timeout=15, allow_redirects=False, verify=False)
     return response.json()['errno'] if response.json()['errno'] != 0 else response.json()['list']
 
 
@@ -120,6 +145,12 @@ def create_dir(dir_name, bdstoken):
     response = s.post(url=url, headers=request_header, data=post_data, timeout=15, allow_redirects=False, verify=False)
     return response.json()['errno']
 
+
+@retry(stop_max_attempt_number=5, wait_fixed=1000)
+def create_no_exist_dir(bdstoken, dir):
+    dir_list_json = get_dir_list(bdstoken, dir)
+    if dir_list_json['errno'] != 0:
+        create_dir(dir, bdstoken)
 
 # 检测链接种类
 def check_link_type(link_list_line):
@@ -155,10 +186,17 @@ def check_links(link_url, pass_code, bdstoken):
             request_header['Cookie'] += ';BDCLND=' + bdclnd
     # 获取文件信息
     response = s.get(url=link_url, headers=request_header, timeout=15, allow_redirects=True, verify=False).content.decode("utf-8")
+    # print("https://pan.baidu.com/share/verify:\n"+response)
     shareid_list = re.findall('"shareid":(\\d+?),"', response)
     user_id_list = re.findall('"share_uk":"(\\d+?)","', response)
     fs_id_list = re.findall('"fs_id":(\\d+?),"', response)
     info_title_list = re.findall('<title>(.+)</title>', response)
+    # file_path_list = re.findall('"path":"(\S+?)","path_md5":', response)
+    file_list = re.findall('"file_list":(\S+?),"errortype":', response)
+    # server_filename_list = re.findall('"server_filename":"(\S+?)","server_mtime":', response)
+    # isdir_list = re.findall('"isdir":"(\d+?)","local_ctime":', response)
+    files = json.loads(file_list[0]) if len(file_list) > 0 else []
+    print(files)
     if not shareid_list:
         return 1
     elif not user_id_list:
@@ -166,7 +204,7 @@ def check_links(link_url, pass_code, bdstoken):
     elif not fs_id_list:
         return info_title_list[0] if info_title_list else 3
     else:
-        return [shareid_list[0], user_id_list[0], fs_id_list]
+        return [shareid_list[0], user_id_list[0], fs_id_list, files]
 
 
 # 转存文件函数
@@ -177,6 +215,30 @@ def transfer_files(check_links_reason, dir_name, bdstoken):
     post_data = {'fsidlist': '[' + fs_id + ']', 'path': '/' + dir_name, }
     response = s.post(url=url, headers=request_header, data=post_data, timeout=15, allow_redirects=False, verify=False)
     return response.json()
+
+# 递归执行转存文件函数
+@retry(stop_max_attempt_number=20, wait_fixed=2000)
+def re_transfer_files(check_links_reason, dir_list, dir_name, bdstoken):
+    url = 'https://pan.baidu.com/share/transfer?shareid=' + check_links_reason[0] + '&from=' + check_links_reason[1] + '&bdstoken=' + bdstoken + '&channel=chunlei&web=1&clienttype=0'
+    # for fs_id in check_links_reason[2]:
+
+    text_logs.insert(END, f'进入目录:{dir_name}\n')
+    create_no_exist_dir(bdstoken, dir_name)
+    for i, dir_ in enumerate(dir_list):
+        post_data = {'fsidlist': f'[{dir_["fs_id"]}]', 'path': dir_name}
+
+        text_logs.insert(END, f'开始转存目录:{dir_["path"]}\n')
+        print(f"转存参数：{post_data}")
+        response = s.post(url=url, headers=request_header, data=post_data, timeout=15, allow_redirects=False, verify=False).json()
+        print(f"{dir_['path']} 转存结果：{response}")
+        if response["errno"] == 0:
+            text_logs.insert(END, f'转存成功::{dir_["path"]}\n')
+        elif response["errno"] == 12 and dir_["isdir"] == 1:
+            text_logs.insert(END, f'转存失败,转存文件数超过限制，文件数{response["target_file_nums"]}。\n')
+            save_dir = dir_name + '/' + dir_["server_filename"]
+            text_logs.insert(END, f'开始执行转存子目录。\n')
+            child_dir_list = get_share_dir_list(bdstoken, check_links_reason, dir_["path"])
+            re_transfer_files(check_links_reason, child_dir_list, save_dir, bdstoken)
 
 
 # 转存秒传链接函数
@@ -246,15 +308,8 @@ def main():
             sys.exit()
 
         # 执行获取目录列表
-        dir_list_json = get_dir_list(bdstoken)
-        if type(dir_list_json) != list:
-            label_state_change(state='error')
-            text_logs.insert(END, '没获取到网盘目录列表,请检查cookie和网络后重试.' + '\n')
-            sys.exit()
-
-        # 执行新建目录
-        dir_list = [dir_json['server_filename'] for dir_json in dir_list_json]
-        if dir_name and dir_name not in dir_list:
+        dir_list_json = get_dir_list(bdstoken, dir_name)
+        if dir_list_json['errno'] != 0:
             create_dir_reason = create_dir(dir_name, bdstoken)
             if create_dir_reason != 0:
                 label_state_change(state='error')
@@ -273,6 +328,7 @@ def main():
                 [link_url, pass_code] = [link_url_org.strip()[:47], pass_code_org.strip()[:4]]
                 # 执行检查链接有效性
                 check_links_reason = check_links(link_url, pass_code, bdstoken)
+                print(check_links_reason)
                 if check_links_reason == 1:
                     text_logs.insert(END, '链接失效,没获取到shareid:' + url_code + '\n')
                 elif check_links_reason == 2:
@@ -300,6 +356,9 @@ def main():
                         text_logs.insert(END, '转存失败,目录中已有同名文件或文件夹存在:' + url_code + '\n')
                     elif transfer_files_reason['errno'] == 12:
                         text_logs.insert(END, '转存失败,转存文件数超过限制:' + url_code + '\n')
+                        # 递归执行转存文件
+                        re_transfer_files(check_links_reason, check_links_reason[3], dir_name, bdstoken)
+                        text_logs.insert(END, '文件数超过限制【递归转存成功】:' + url_code + '\n')
                     else:
                         text_logs.insert(END, '转存失败,错误代码(' + str(transfer_files_reason['errno']) + '):' + url_code + '\n')
                 else:
